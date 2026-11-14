@@ -75,32 +75,31 @@ pipeline {
             }
         }
 
-        stage('SonarQube Analysis') {
-            steps {
-                dir('backend') {
-                    withSonarQubeEnv('SonarQube') {
-                        sh '''
-                            mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:5.1.0.4751:sonar \
-                            -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-                            -Dsonar.projectName=Devops_3ACC2
-                        '''
-                    }
-                }
-            }
-        }
+        
+		stage('SonarQube Analysis') {
+		    steps {
+		        dir('backend') {
+		            withSonarQubeEnv('SonarQube') {
+		                sh '''
+		                    mvn -B sonar:sonar \
+		                    -Dsonar.projectKey=Devops_3ACC2 \
+		                    -Dsonar.projectName=Devops_3ACC2 \
+		                    -Dsonar.java.binaries=target/classes
+		                '''
+		            }
+		        }
+		    }
+		}
 
-        stage('Quality Gate') {
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    script {
-                        def qualityGate = waitForQualityGate()
-                        if (qualityGate.status != 'OK') {
-                            error "SonarQube Quality Gate failed: ${qualityGate.status}"
-                        }
-                    }
-                }
-            }
-        }
+		stage('Quality Gate') {
+		    steps {
+		        timeout(time: 5, unit: 'MINUTES') {
+		            waitForQualityGate(
+		                abortPipeline: true
+		            )
+		        }
+		    }
+		}
 
         stage('Archive Backend Artifact') {
             steps {
