@@ -32,9 +32,31 @@ pipeline {
 		                    -p 3306:3306 \
 		                    -v mysql_data:/var/lib/mysql \
 		                    mysql:8.4
+		
+		            elif [ "$(docker inspect -f '{{.State.Running}}' mysql-devops)" != "true" ]; then
+		                echo "MySQL exists but is stopped. Starting it..."
+		                docker start mysql-devops
 		            else
-		                echo "MySQL container already exists."
+		                echo "MySQL container already exists and is running."
 		            fi
+		
+		            echo "Waiting for MySQL..."
+		
+		            for i in $(seq 1 60); do
+		                if docker exec mysql-devops \
+		                    mysqladmin ping -h 127.0.0.1 \
+		                    -uroot -proot --silent 2>/dev/null; then
+		
+		                    echo "MySQL is ready!"
+		                    exit 0
+		                fi
+		
+		                sleep 2
+		            done
+		
+		            echo "MySQL failed to start!"
+		            docker logs mysql-devops --tail 50
+		            exit 1
 		        '''
 		    }
 		}
