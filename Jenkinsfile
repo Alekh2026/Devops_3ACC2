@@ -9,43 +9,64 @@ pipeline {
         // Poll GitHub every 2 minutes as a fallback
         pollSCM('H/2 * * * *')
     }
-
+	
     stages {
 
-        stage('Checkout SCM') {
+        stage('Checkout') {
             steps {
-                git branch: 'main',
-                    credentialsId: 'github_3acc2',
-                    url: 'https://github.com/Alekh2026/Devops_3ACC2.git'
+                checkout scm
             }
         }
 
-        stage('Build & Test Backend') {
+        stage('Build Backend & JUnit Tests') {
             steps {
                 dir('backend') {
-                    sh 'mvn clean package -DskipTests'
-		    // sh 'mvn test'
+                    sh 'mvn -B clean verify'
+                }
+            }
+            post {
+                always {
+                    junit testResults: 'backend/target/surefire-reports/*.xml',
+                          allowEmptyResults: true
                 }
             }
         }
 
-        stage('Build Frontend') {
+        stage('SonarQube Analysis') {
             steps {
-                dir('frontend') {
-                    // sh 'npm install'
-                    // sh 'npm run build'
+                dir('backend') {
+                    withSonarQubeEnv('SonarQube') {
+                        sh '''
+                            mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:5.1.0.4751:sonar \
+                            -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                            -Dsonar.projectName=Devops_3ACC2
+                        '''
+                    }
                 }
             }
         }
 
-        stage('Archive Artifacts') {
+        stage('Quality Gate') {
             steps {
-                archiveArtifacts artifacts: 'backend/target/*.jar, frontend/dist/**',
+                timeout(time: 5, unit: 'MINUTES') {
+                    script {
+                        def qualityGate = waitForQualityGate()
+                        if (qualityGate.status != 'OK') {
+                            error "SonarQube Quality Gate failed: ${qualityGate.status}"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Archive Backend Artifact') {
+            steps {
+                archiveArtifacts artifacts: 'backend/target/*.jar',
+                                 fingerprint: true,
                                  allowEmptyArchive: false
             }
         }
     }
-
     post {
         success {
             echo 'Pipeline completed successfully!'
