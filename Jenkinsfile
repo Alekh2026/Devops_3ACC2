@@ -17,6 +17,27 @@ pipeline {
                 checkout scm
             }
         }
+		
+		stage('Check MySQL Container') {
+		    steps {
+		        sh '''
+		            if ! docker inspect mysql-devops >/dev/null 2>&1; then
+		                echo "MySQL container does not exist. Creating it..."
+		
+		                docker run -d \
+		                    --name mysql-devops \
+		                    --restart unless-stopped \
+		                    -e MYSQL_ROOT_PASSWORD=root \
+		                    -e MYSQL_DATABASE=devops_db \
+		                    -p 3306:3306 \
+		                    -v mysql_data:/var/lib/mysql \
+		                    mysql:8.4
+		            else
+		                echo "MySQL container already exists."
+		            fi
+		        '''
+		    }
+		}
 
         stage('Build Backend & JUnit Tests') {
             steps {
