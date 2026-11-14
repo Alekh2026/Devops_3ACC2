@@ -75,13 +75,13 @@ pipeline {
             }
         }
 
-        
 		stage('SonarQube Analysis') {
 		    steps {
 		        dir('backend') {
 		            withSonarQubeEnv('SonarQube') {
 		                sh '''
-		                    mvn -B sonar:sonar \
+		                    mvn -B \
+		                    org.sonarsource.scanner.maven:sonar-maven-plugin:5.1.0.4751:sonar \
 		                    -Dsonar.projectKey=Devops_3ACC2 \
 		                    -Dsonar.projectName=Devops_3ACC2 \
 		                    -Dsonar.java.binaries=target/classes
