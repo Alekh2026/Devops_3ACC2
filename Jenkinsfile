@@ -100,6 +100,42 @@ pipeline {
 		        }
 		    }
 		}
+		
+		stage('Build and Push Backend Docker Image') {
+		    steps {
+		        withCredentials([
+		            usernamePassword(
+		                credentialsId: 'DockerHub',
+		                usernameVariable: 'DOCKERHUB_USER',
+		                passwordVariable: 'DOCKERHUB_TOKEN'
+		            )
+		        ]) {
+		            dir('backend') {
+		                sh '''
+		                    set -e
+		                    set +x
+		                    IMAGE="$DOCKERHUB_USER/devops-backend"
+		                    echo "Building backend Docker image..."
+		                    docker build \
+		                        -t "$IMAGE:$BUILD_NUMBER" \
+		                        -t "$IMAGE:latest" \
+		                        .
+		                    echo "Logging in to Docker Hub..."
+		                    printf '%s' "$DOCKERHUB_TOKEN" | \
+		                        docker login \
+		                        --username "$DOCKERHUB_USER" \
+		                        --password-stdin
+		                    echo "Pushing image with build number..."
+		                    docker push "$IMAGE:$BUILD_NUMBER"
+		                    echo "Pushing latest image..."
+		                    docker push "$IMAGE:latest"
+		                    docker logout
+		                    echo "Docker image successfully pushed!"
+		                '''
+		            }
+		        }
+		    }
+		}
 
         stage('Archive Backend Artifact') {
             steps {
