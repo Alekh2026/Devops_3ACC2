@@ -16,7 +16,9 @@ RUN npx ng build --configuration production
 # ---------------------------------------------------------------
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Rendered by the image entrypoint (envsubst) into /etc/nginx/conf.d/default.conf
+ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist/frontend/browser /usr/share/nginx/html
 
 EXPOSE 8080
