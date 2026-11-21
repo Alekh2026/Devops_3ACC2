@@ -1,0 +1,16 @@
+# Starts the minikube cluster automatically when the VM boots.
+# Install:  sudo cp ops/minikube.service /etc/systemd/system/ && sudo systemctl enable minikube
+[Unit]
+Description=Minikube local Kubernetes cluster
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=vagrant
+ExecStart=/usr/local/bin/minikube start
+ExecStop=/usr/local/bin/minikube stop
+
+[Install]
+WantedBy=multi-user.target

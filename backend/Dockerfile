@@ -1,9 +1,15 @@
-FROM eclipse-temurin:21-jre
+# Runtime image for the Spring Boot API.
+# The jar is built by Maven in the pipeline before this step.
+FROM eclipse-temurin:21-jre-alpine
 
 WORKDIR /app
 
+# Run as a non-root user
+RUN addgroup -S app && adduser -S app -G app
+USER app
+
 COPY target/*.jar app.jar
 
-EXPOSE 8081
+EXPOSE 8080
 
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]

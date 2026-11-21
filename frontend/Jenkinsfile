@@ -1,0 +1,92 @@
+// =====================================================================
+//  Frontend pipeline - Angular app served by Nginx
+//  Docker multi-stage build (npm ci + ng build) -> Docker Hub -> Kubernetes
+//  Node is not installed on the Jenkins host: everything builds in Docker.
+// =====================================================================
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '15'))
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    triggers {
+        githubPush()
+        pollSCM('H/2 * * * *')
+    }
+
+    environment {
+        IMAGE     = 'hyperrftw/devops-frontend'
+        TAG       = "${env.BUILD_NUMBER}"
+        NAMESPACE = 'gestion-projets'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                dir('frontend') {
+                    sh 'docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .'
+                }
+            }
+        }
+
+        stage('Docker Push') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'DockerHub',
+                                                  usernameVariable: 'DOCKERHUB_USER',
+                                                  passwordVariable: 'DOCKERHUB_TOKEN')]) {
+                    sh '''
+                        set -e
+                        printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin
+                        docker push "$IMAGE:$TAG"
+                        docker push "$IMAGE:latest"
+                    '''
+                }
+            }
+            post {
+                always {
+                    sh 'docker logout || true'
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh '''
+                    set -e
+                    kubectl apply -f k8s/00-namespace.yaml
+                    sed "s|$IMAGE:latest|$IMAGE:$TAG|" k8s/30-frontend.yaml | kubectl apply -f -
+                    kubectl -n "$NAMESPACE" rollout status deployment/frontend --timeout=180s
+                '''
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                // The page must load and the /api proxy must reach the backend
+                sh '''
+                    set -e
+                    URL="http://192.168.49.2:30080"   # minikube node IP + NodePort
+                    curl -fsS "$URL/healthz"
+                    curl -fsS -o /dev/null "$URL/"
+                    curl -fsS -o /dev/null "$URL/api/projet/all"
+                '''
+            }
+        }
+    }
+
+    post {
+        success { echo "Frontend ${env.TAG} is live: http://192.168.56.10:4200" }
+        failure { echo 'Frontend pipeline failed, check the stage logs above.' }
+        always  { sh 'docker image prune -f || true' }
+    }
+}

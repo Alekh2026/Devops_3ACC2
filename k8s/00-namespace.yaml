@@ -1,0 +1,7 @@
+# Everything for the app lives in its own namespace, easy to inspect or wipe.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gestion-projets
+  labels:
+    app.kubernetes.io/part-of: gestion-projets

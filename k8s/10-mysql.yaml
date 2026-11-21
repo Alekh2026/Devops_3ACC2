@@ -1,0 +1,72 @@
+# MySQL database for the backend.
+# The password is NOT stored here: it comes from the "mysql-secret" Secret,
+# created once on the cluster (see README > Kubernetes).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-data
+  namespace: gestion-projets
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+  namespace: gestion-projets
+  labels:
+    app: mysql
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate          # only one pod may own the volume at a time
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.4
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MYSQL_DATABASE
+              value: devops_db
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: password
+          resources:
+            requests: { cpu: 100m, memory: 384Mi }
+            limits:   { memory: 640Mi }
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$MYSQL_ROOT_PASSWORD\" --silent"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mysql-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: gestion-projets
+spec:
+  selector:
+    app: mysql
+  ports:
+    - port: 3306
