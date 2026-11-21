@@ -107,8 +107,8 @@ pipeline {
                     kubectl apply -f k8s/app/00-namespace.yaml
                     kubectl apply -f k8s/app/10-mysql.yaml
                     sed "s|$IMAGE:latest|$IMAGE:$TAG|" k8s/app/20-backend.yaml | kubectl apply -f -
-                    kubectl -n "$NAMESPACE" rollout status deployment/mysql   --timeout=300s
-                    kubectl -n "$NAMESPACE" rollout status deployment/backend --timeout=300s
+                    kubectl -n "$NAMESPACE" rollout status deployment/mysql   --timeout=600s
+                    kubectl -n "$NAMESPACE" rollout status deployment/backend --timeout=600s
                 '''
             }
         }

@@ -40,16 +40,22 @@ spec:
             requests: { cpu: 200m, memory: 384Mi }
             limits:   { memory: 640Mi }
           # Spring Boot Actuator probes
+          # Generous budgets: the lab node is small and shared with Jenkins/SonarQube
           startupProbe:
             httpGet: { path: /actuator/health/liveness, port: 8080 }
             periodSeconds: 5
-            failureThreshold: 36      # up to 3 min for the first start
+            timeoutSeconds: 3
+            failureThreshold: 72      # up to 6 min for a cold start
           readinessProbe:
             httpGet: { path: /actuator/health/readiness, port: 8080 }
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           livenessProbe:
             httpGet: { path: /actuator/health/liveness, port: 8080 }
             periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
 ---
 apiVersion: v1
 kind: Service
