@@ -1,6 +1,6 @@
 package tn.esprit.backend.controller;
 
-import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import tn.esprit.backend.entity.Entreprise;
 import tn.esprit.backend.service.IEntrepriseService;
@@ -9,11 +9,10 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/entreprise")
-@AllArgsConstructor
-@CrossOrigin("*")
+@RequiredArgsConstructor
 public class EntrepriseController {
 
-    IEntrepriseService entrepriseService;
+    private final IEntrepriseService entrepriseService;
 
     @PostMapping("/add")
     public Entreprise addEntreprise(@RequestBody Entreprise entreprise) {

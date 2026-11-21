@@ -1,6 +1,6 @@
 package tn.esprit.backend.controller;
 
-import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import tn.esprit.backend.entity.Projet;
 import tn.esprit.backend.service.IProjetService;
@@ -9,11 +9,10 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/projet")
-@AllArgsConstructor
-@CrossOrigin("*")
+@RequiredArgsConstructor
 public class ProjetController {
 
-    IProjetService projetService;
+    private final IProjetService projetService;
 
     @PostMapping("/add")
     public Projet addProjet(@RequestBody Projet projet) {

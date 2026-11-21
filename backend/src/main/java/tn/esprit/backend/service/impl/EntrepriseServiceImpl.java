@@ -1,6 +1,6 @@
 package tn.esprit.backend.service.impl;
 
-import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import tn.esprit.backend.entity.Entreprise;
 import tn.esprit.backend.repository.EntrepriseRepository;
@@ -9,10 +9,10 @@ import tn.esprit.backend.service.IEntrepriseService;
 import java.util.List;
 
 @Service
-@AllArgsConstructor
+@RequiredArgsConstructor
 public class EntrepriseServiceImpl implements IEntrepriseService {
 
-    EntrepriseRepository entrepriseRepository;
+    private final EntrepriseRepository entrepriseRepository;
 
     @Override
     public Entreprise addEntreprise(Entreprise entreprise) {
