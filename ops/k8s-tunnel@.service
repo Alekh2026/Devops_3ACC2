@@ -1,0 +1,18 @@
+# Publishes a port of the minikube node on the VM network, so it can be reached
+# from the host machine at http://192.168.56.10:<vm-port>
+#
+# Instance name = <vm-port>-<minikube-port>:
+#   sudo systemctl enable --now k8s-tunnel@4200-30080   # application (NodePort)
+#   sudo systemctl enable --now k8s-tunnel@80-80        # Ingress controller
+#   sudo systemctl enable --now k8s-tunnel@4466-30466   # Headlamp dashboard
+[Unit]
+Description=Tunnel VM port to minikube (%i)
+After=network-online.target minikube.service
+
+[Service]
+ExecStart=/usr/local/bin/k8s-tunnel %i
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

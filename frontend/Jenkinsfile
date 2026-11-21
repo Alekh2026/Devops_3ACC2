@@ -1,7 +1,8 @@
 // =====================================================================
 //  projet-frontend - Angular app served by Nginx
-//  Triggered by projet-backend. Docker multi-stage build (npm ci + ng build) -> Docker Hub -> Kubernetes
-//  Node is not installed on the Jenkins host: everything builds in Docker.
+//  Triggered by projet-backend. Docker build (npm ci + ng build)
+//  -> Nexus (static bundle) -> Docker Hub -> Kubernetes -> smoke test.
+//  Node is not needed on the Jenkins host: the build runs inside Docker.
 // =====================================================================
 pipeline {
     agent any
@@ -20,7 +21,9 @@ pipeline {
     environment {
         IMAGE     = 'hyperrftw/devops-frontend'
         TAG       = "${env.BUILD_NUMBER}"
+        VERSION   = "1.0.${env.BUILD_NUMBER}"
         NAMESPACE = 'gestion-projets'
+        NEXUS_URL = 'http://localhost:8081/repository/maven-releases/'
     }
 
     stages {
@@ -34,8 +37,29 @@ pipeline {
         stage('Docker Build') {
             steps {
                 dir('frontend') {
-                    sh 'docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .'
+                    retry(3) {
+                        sh 'docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .'
+                    }
                 }
+            }
+        }
+
+        // The compiled bundle is versioned in Nexus as tn.esprit:frontend:<version>:tgz
+        stage('Publish to Nexus') {
+            steps {
+                sh '''
+                    set -e
+                    rm -rf dist-pkg && mkdir dist-pkg
+                    CID=$(docker create "$IMAGE:$TAG")
+                    docker cp "$CID:/usr/share/nginx/html/." dist-pkg/
+                    docker rm "$CID" >/dev/null
+                    tar -czf "frontend-$VERSION.tgz" -C dist-pkg .
+
+                    mvn -B -q org.apache.maven.plugins:maven-deploy-plugin:3.1.3:deploy-file \
+                        -DrepositoryId=nexus -Durl="$NEXUS_URL" \
+                        -DgroupId=tn.esprit -DartifactId=frontend -Dversion="$VERSION" \
+                        -Dpackaging=tgz -Dfile="frontend-$VERSION.tgz" -DgeneratePom=true
+                '''
             }
         }
 
@@ -44,12 +68,14 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'DockerHub',
                                                   usernameVariable: 'DOCKERHUB_USER',
                                                   passwordVariable: 'DOCKERHUB_TOKEN')]) {
-                    sh '''
-                        set -e
-                        printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin
-                        docker push "$IMAGE:$TAG"
-                        docker push "$IMAGE:latest"
-                    '''
+                    retry(3) {
+                        sh '''
+                            set -e
+                            printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin
+                            docker push "$IMAGE:$TAG"
+                            docker push "$IMAGE:latest"
+                        '''
+                    }
                 }
             }
             post {
@@ -59,34 +85,40 @@ pipeline {
             }
         }
 
+        // Frontend + Ingress routes (UI and API gateway)
         stage('Deploy to Kubernetes') {
             steps {
                 sh '''
                     set -e
-                    kubectl apply -f k8s/00-namespace.yaml
-                    sed "s|$IMAGE:latest|$IMAGE:$TAG|" k8s/30-frontend.yaml | kubectl apply -f -
-                    kubectl -n "$NAMESPACE" rollout status deployment/frontend --timeout=180s
+                    kubectl apply -f k8s/app/00-namespace.yaml
+                    sed "s|$IMAGE:latest|$IMAGE:$TAG|" k8s/app/30-frontend.yaml | kubectl apply -f -
+                    kubectl apply -f k8s/app/40-ingress.yaml
+                    kubectl -n "$NAMESPACE" rollout status deployment/frontend --timeout=300s
                 '''
             }
         }
 
+        // Checks the NodePort entry and the Ingress gateway end to end
         stage('Smoke Test') {
             steps {
-                // The page must load and the /api proxy must reach the backend
                 sh '''
                     set -e
-                    URL="http://192.168.49.2:30080"   # minikube node IP + NodePort
-                    curl -fsS "$URL/healthz"
-                    curl -fsS -o /dev/null "$URL/"
-                    curl -fsS -o /dev/null "$URL/api/projet/all"
+                    NODE=192.168.49.2                       # minikube node IP
+                    curl -fsS  "http://$NODE:30080/healthz"
+                    curl -fsS -o /dev/null "http://$NODE:30080/api/projet/all"
+                    curl -fsS -o /dev/null -H "Host: gestion-projets.local" "http://$NODE/"
+                    curl -fsS -o /dev/null -H "Host: gestion-projets.local" "http://$NODE/api/projet/all"
+                    echo "Smoke test passed"
                 '''
             }
         }
     }
 
     post {
-        success { echo "Frontend ${env.TAG} is live: http://192.168.56.10:4200" }
-        failure { echo 'Frontend pipeline failed, check the stage logs above.' }
-        always  { sh 'docker image prune -f || true' }
+        success { echo "Frontend ${env.VERSION} is live: http://192.168.56.10:4200 and http://gestion-projets.local" }
+        failure { echo 'Frontend pipeline failed: check the failing stage above.' }
+        always  {
+            sh 'rm -rf dist-pkg frontend-*.tgz; docker image prune -f || true'
+        }
     }
 }

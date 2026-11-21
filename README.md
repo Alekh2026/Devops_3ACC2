@@ -1,6 +1,6 @@
 # Gestion des Projets — Plateforme DevOps
 
-Application de gestion de projets (entreprises, équipes, projets et détails techniques) composée d'une **API Spring Boot** et d'une **interface Angular**, livrée automatiquement par **Jenkins** jusqu'à **Kubernetes**, avec contrôle qualité **SonarQube** et dépôt d'artefacts **Nexus**.
+Application de gestion de projets (entreprises, équipes, projets et détails techniques) composée d'une **API Spring Boot** et d'une **interface Angular**, livrée automatiquement par **Jenkins** jusqu'à **Kubernetes**, avec contrôle qualité **SonarQube**, dépôt d'artefacts **Nexus**, **Ingress** comme passerelle d'API et console **Headlamp** pour superviser le cluster.
 
 ![Java](https://img.shields.io/badge/Java-17-orange) ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4-6DB33F) ![Angular](https://img.shields.io/badge/Angular-22-DD0031) ![Kubernetes](https://img.shields.io/badge/Kubernetes-minikube-326CE5) ![Jenkins](https://img.shields.io/badge/CI%2FCD-Jenkins-D24939)
 
@@ -14,62 +14,70 @@ Application de gestion de projets (entreprises, équipes, projets et détails te
 4. [Développement local](#développement-local)
 5. [Tests et qualité](#tests-et-qualité)
 6. [Chaîne CI/CD](#chaîne-cicd)
-7. [Mise en place de l'environnement](#mise-en-place-de-lenvironnement)
-8. [Déploiement Kubernetes](#déploiement-kubernetes)
-9. [Configuration](#configuration)
-10. [API](#api)
-11. [Dépannage](#dépannage)
+7. [Artefacts Nexus](#artefacts-nexus)
+8. [Mise en place de l'environnement](#mise-en-place-de-lenvironnement)
+9. [Déploiement Kubernetes](#déploiement-kubernetes)
+10. [Vérifier l'application](#vérifier-lapplication)
+11. [Configuration](#configuration)
+12. [API](#api)
+13. [Dépannage](#dépannage)
 
 ---
 
 ## Architecture
 
 ```
-            push                 webhook / polling
- Développeur ───► GitHub ─────────────────────────► Jenkins
-                                                      │
-        ┌──────────────────── projet-backend ─────────┴───────────────────┐
-        │ Build + tests ─► SonarQube ─► Quality Gate ─► Nexus ─► Docker Hub │
-        │                                                  └─► Kubernetes   │
-        └──────────────────────────────┬──────────────────────────────────┘
-                                       │ succès
-        ┌──────────────────── projet-frontend ────────────────────────────┐
-        │ Build image (npm ci + ng build) ─► Docker Hub ─► Kubernetes ─► Smoke test │
-        └──────────────────────────────────────────────────────────────────┘
+ Développeur ─push─► GitHub ─webhook / polling─► Jenkins
+                                                   │
+   projet-backend : tests ─► SonarQube ─► Quality Gate ─► Nexus ─► Docker Hub ─► Kubernetes
+                                                   │ succès
+   projet-frontend : build image ─► Nexus ─► Docker Hub ─► Kubernetes ─► smoke test
 
- Kubernetes · namespace gestion-projets
- Navigateur ─► :4200 ─► frontend (Nginx) ──/api──► backend (Spring Boot) ──► mysql (volume persistant)
+ Cluster minikube
+ ┌─────────────────────────── namespace gestion-projets ───────────────────────────┐
+ │  Ingress (gestion-projets.local)                                                │
+ │     /       ─► frontend (Nginx + Angular)                                       │
+ │     /api/*  ─► backend (Spring Boot) ─► mysql (volume persistant)               │
+ └─────────────────────────────────────────────────────────────────────────────────┘
+ namespace ingress-nginx : contrôleur Ingress     namespace headlamp : console du cluster
 ```
 
-- Le navigateur ne parle qu'au frontend : Nginx sert l'application et relaie `/api/*` vers le backend. Une seule origine, donc aucune configuration CORS n'est nécessaire en production.
-- Le frontend n'est déployé qu'après un backend validé : l'interface ne précède jamais l'API dont elle dépend.
-- Chaque image est taguée avec le numéro de build ; Kubernetes déploie toujours le tag exact, ce qui rend chaque version traçable et réversible.
+- **Ingress = passerelle d'API** : un seul point d'entrée, qui route l'interface et l'API et retire le préfixe `/api` avant d'atteindre le backend.
+- **Même origine** pour le navigateur : aucune configuration CORS n'est nécessaire en production.
+- **Ordre garanti** : le frontend n'est déployé qu'après un backend validé.
+- **Traçabilité** : chaque image porte le numéro de build ; Kubernetes déploie ce tag exact, ce qui permet un retour arrière immédiat.
 
 ---
 
 ## Structure du dépôt
 
 ```
-├── Jenkinsfile              Pipeline projet-backend
-├── backend/                 API Spring Boot (Java 17, Maven)
-│   ├── Dockerfile           Image d'exécution (JRE, utilisateur non-root)
-│   ├── lombok.config        Exclut le code généré par Lombok de la couverture
+├── backend/                     API Spring Boot (Java 17, Maven)
+│   ├── Jenkinsfile              Pipeline projet-backend
+│   ├── Dockerfile               Image d'exécution (JRE, utilisateur non-root)
+│   ├── pom.xml                  Dépendances, JaCoCo, SonarQube, Nexus
+│   ├── lombok.config            Exclut le code Lombok de la couverture
 │   └── src/
-│       ├── main/            controller · service · repository · entity · config · exception
-│       └── test/            Tests unitaires et d'intégration (H2 en mémoire)
-├── frontend/                Application Angular 22
-│   ├── Jenkinsfile          Pipeline projet-frontend
-│   ├── Dockerfile           Build Node puis image Nginx non-root
-│   ├── nginx.conf           Routage SPA et proxy /api
-│   └── proxy.conf.json      Proxy /api pour `ng serve`
-├── k8s/                     Manifestes Kubernetes, appliqués dans l'ordre
-│   ├── 00-namespace.yaml
-│   ├── 10-mysql.yaml        Deployment, volume persistant, Service
-│   ├── 20-backend.yaml      Deployment (sondes Actuator), Service
-│   └── 30-frontend.yaml     Deployment, Service NodePort 30080
-└── ops/                     Unités systemd pour la machine hôte du cluster
-    ├── minikube.service     Démarre le cluster au boot
-    └── app-tunnel.service   Publie l'application sur le port 4200
+│       ├── main/                controller · service · repository · entity · config · exception
+│       └── test/                Tests unitaires, web et d'intégration (H2)
+├── frontend/                    Application Angular 22
+│   ├── Jenkinsfile              Pipeline projet-frontend
+│   ├── Dockerfile               Build Node puis image Nginx non-root
+│   ├── nginx.conf               Routage SPA et proxy /api
+│   └── proxy.conf.json          Proxy /api pour `ng serve`
+├── k8s/
+│   ├── app/                     Application, appliquée dans l'ordre
+│   │   ├── 00-namespace.yaml
+│   │   ├── 10-mysql.yaml        Deployment, volume persistant, Service
+│   │   ├── 20-backend.yaml      Deployment (sondes Actuator), Service
+│   │   ├── 30-frontend.yaml     Deployment, Service NodePort 30080
+│   │   └── 40-ingress.yaml      Routes UI et passerelle /api
+│   └── platform/
+│       └── headlamp.yaml        Console web du cluster (lecture seule)
+└── ops/                         Unités systemd de la machine hôte du cluster
+    ├── minikube.service         Démarre le cluster au boot
+    ├── k8s-tunnel@.service      Publie un port du cluster sur la machine hôte
+    └── k8s-tunnel.sh
 ```
 
 ---
@@ -79,36 +87,27 @@ Application de gestion de projets (entreprises, équipes, projets et détails te
 | Outil | Version | Usage |
 |---|---|---|
 | Java JDK | 17+ | Backend |
-| Maven | 3.6.3+ | Build backend |
-| Node.js / npm | 22 / 10+ | Développement frontend |
+| Maven | 3.6.3+ | Build backend, publication Nexus |
+| Node.js / npm | 22 / 10+ | Développement frontend uniquement |
 | Docker | 24+ | Images, SonarQube, Nexus |
-| Jenkins | 2.4xx+ | CI/CD (plugins : Pipeline, Git, GitHub, SonarQube Scanner, Docker Pipeline, Credentials Binding) |
+| Jenkins | 2.4xx+ | Plugins : Pipeline, Git, GitHub, SonarQube Scanner, Docker Pipeline, Credentials Binding |
 | minikube / kubectl | 1.37 / 1.34 | Cluster Kubernetes local |
+| socat | — | Publication des ports du cluster |
 
 ---
 
 ## Développement local
 
-**Base de données** (MySQL dans Docker) :
-
 ```bash
+# Base de données
 docker run -d --name mysql-devops -p 3306:3306 \
   -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=devops_db mysql:8.4
-```
 
-**Backend** — http://localhost:8080
+# Backend : http://localhost:8080
+cd backend && mvn spring-boot:run
 
-```bash
-cd backend
-mvn spring-boot:run
-```
-
-**Frontend** — http://localhost:4200 (les appels `/api` sont relayés vers le backend)
-
-```bash
-cd frontend
-npm ci
-npm start
+# Frontend : http://localhost:4200 (les appels /api sont relayés vers le backend)
+cd frontend && npm ci && npm start
 ```
 
 ---
@@ -117,7 +116,7 @@ npm start
 
 ```bash
 cd backend
-mvn clean verify                          # tests + rapport de couverture (target/site/jacoco/index.html)
+mvn clean verify                          # tests + couverture (target/site/jacoco/index.html)
 mvn sonar:sonar -Dsonar.login=<token>     # analyse SonarQube
 ```
 
@@ -128,65 +127,79 @@ mvn sonar:sonar -Dsonar.login=<token>     # analyse SonarQube
 | Intégration | `@SpringBootTest` + H2 | Démarrage complet du contexte |
 
 Les tests utilisent une base **H2 en mémoire** : aucune base externe n'est nécessaire en CI.
-La clé du projet SonarQube, l'URL du serveur et le chemin du rapport JaCoCo sont déclarés dans `backend/pom.xml`.
 
 ---
 
 ## Chaîne CI/CD
 
-### projet-backend (`Jenkinsfile`)
+### projet-backend — `backend/Jenkinsfile`
 
 | Étape | Rôle |
 |---|---|
 | Build & Unit Tests | `mvn clean verify`, publication des résultats JUnit |
 | SonarQube Analysis | Analyse statique et couverture |
-| Quality Gate | Bloque la livraison si la qualité n'est pas au rendez-vous |
-| Publish to Nexus | Déploie le jar dans `maven-snapshots` |
-| Docker Build & Push | Image `devops-backend:<build>` et `:latest` |
-| Deploy to Kubernetes | Applique MySQL et le backend, attend le rollout |
+| Quality Gate | Bloque la livraison si le seuil de qualité n'est pas atteint |
+| Publish to Nexus | Jar dans `maven-snapshots` |
+| Docker Build & Push | `devops-backend:<build>` et `:latest` (3 tentatives) |
+| Deploy to Kubernetes | MySQL + backend, attente du rollout |
 
-Déclencheurs : webhook GitHub, et scrutation du dépôt toutes les 2 minutes en secours.
+Déclencheurs : webhook GitHub, scrutation toutes les 2 minutes en secours.
 
-### projet-frontend (`frontend/Jenkinsfile`)
+### projet-frontend — `frontend/Jenkinsfile`
 
 | Étape | Rôle |
 |---|---|
-| Docker Build | Build multi-étapes (`npm ci`, `ng build`) — Node n'est pas requis sur Jenkins |
-| Docker Push | Image `devops-frontend:<build>` et `:latest` |
-| Deploy to Kubernetes | Applique le frontend, attend le rollout |
-| Smoke Test | Vérifie la page, la sonde `/healthz` et le proxy `/api` |
+| Docker Build | Build multi-étapes (`npm ci`, `ng build`) |
+| Publish to Nexus | Bundle compilé `frontend-1.0.<build>.tgz` dans `maven-releases` |
+| Docker Push | `devops-frontend:<build>` et `:latest` |
+| Deploy to Kubernetes | Frontend + routes Ingress |
+| Smoke Test | NodePort, page, `/healthz` et passerelle `/api` via l'Ingress |
 
 Déclencheur : succès de `projet-backend`.
 
 ---
 
-## Mise en place de l'environnement
+## Artefacts Nexus
 
-### 1. Services d'outillage
+Dans Nexus : **Browse › dépôt › tn › esprit**.
+
+| Artefact | Dépôt | Chemin |
+|---|---|---|
+| Jar du backend | `maven-snapshots` | `tn/esprit/backend/1.0.0-SNAPSHOT/` |
+| Bundle du frontend | `maven-releases` | `tn/esprit/frontend/1.0.<build>/` |
+
+Recherche par API :
 
 ```bash
-# SonarQube (+ PostgreSQL) : http://<hôte>:9000
-# Nexus                    : http://<hôte>:8081
+curl -s "http://<hôte>:8081/service/rest/v1/search?group=tn.esprit" | grep -E '"(name|version)"'
+```
+
+---
+
+## Mise en place de l'environnement
+
+### 1. Outillage
+
+```bash
 docker run -d --name nexus --restart unless-stopped -p 8081:8081 \
   -e INSTALL4J_ADD_VM_PARAMS="-Xms512m -Xmx768m -XX:MaxDirectMemorySize=768m" \
   -v nexus-data:/nexus-data sonatype/nexus3:3.75.1
 ```
 
-Le mot de passe initial de l'administrateur Nexus se trouve dans `/nexus-data/admin.password` du conteneur.
+Mot de passe initial de l'administrateur : `/nexus-data/admin.password` dans le conteneur. Créer un compte dédié à Jenkins avec un rôle limité aux dépôts Maven (`nx-repository-view-maven2-*-*`).
 
 ### 2. Jenkins
 
 | Élément | Où le configurer |
 |---|---|
-| Serveur SonarQube nommé `SonarQube` (avec token) + webhook SonarQube vers `http://<jenkins>/sonarqube-webhook/` | Administrer Jenkins › System |
+| Serveur SonarQube `SonarQube` (token) + webhook SonarQube vers `http://<jenkins>/sonarqube-webhook/` | Administrer Jenkins › System |
 | Identifiants Docker Hub, id `DockerHub` | Administrer Jenkins › Credentials |
-| Compte Nexus dédié (rôle limité aux dépôts Maven), serveur `nexus` | `~jenkins/.m2/settings.xml` |
+| Compte Nexus, serveur `nexus` | `~jenkins/.m2/settings.xml` |
 | Accès au cluster | `~jenkins/.kube/config` (`kubectl config view --flatten --minify`) |
-| Utilisateur `jenkins` dans le groupe `docker` | `sudo usermod -aG docker jenkins` |
-
-Exemple de `~jenkins/.m2/settings.xml` :
+| Accès Docker | `sudo usermod -aG docker jenkins` |
 
 ```xml
+<!-- ~jenkins/.m2/settings.xml -->
 <settings>
   <servers>
     <server>
@@ -198,11 +211,16 @@ Exemple de `~jenkins/.m2/settings.xml` :
 </settings>
 ```
 
-Créer deux jobs *Pipeline from SCM* sur ce dépôt : `projet-backend` (script `Jenkinsfile`) et `projet-frontend` (script `frontend/Jenkinsfile`).
+Créer deux jobs *Pipeline script from SCM* sur ce dépôt :
+
+| Job | Script Path |
+|---|---|
+| `projet-backend` | `backend/Jenkinsfile` |
+| `projet-frontend` | `frontend/Jenkinsfile` |
 
 ### 3. Webhook GitHub
 
-Exposer Jenkins (par exemple avec `ngrok http 8080`) puis ajouter dans GitHub › Settings › Webhooks l'URL `https://<url-ngrok>/github-webhook/` pour l'événement *push*.
+Exposer Jenkins (`ngrok http 8080`) puis ajouter dans GitHub › Settings › Webhooks : `https://<url-ngrok>/github-webhook/`, événement *push*.
 
 ---
 
@@ -212,17 +230,20 @@ Exposer Jenkins (par exemple avec `ngrok http 8080`) puis ajouter dans GitHub �
 
 ```bash
 minikube start --driver=docker --cpus=2 --memory=2200
+minikube addons enable ingress
 
-kubectl apply -f k8s/00-namespace.yaml
+kubectl apply -f k8s/app/00-namespace.yaml
 kubectl -n gestion-projets create secret generic mysql-secret \
   --from-literal=password="$(openssl rand -hex 12)"
+kubectl apply -f k8s/platform/headlamp.yaml
 
-# Démarrage automatique et exposition de l'application sur le port 4200
+# Démarrage automatique et publication des ports
 sudo apt-get install -y socat
+sudo install -m 755 ops/k8s-tunnel.sh /usr/local/bin/k8s-tunnel
 sudo cp ops/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable minikube
-sudo systemctl enable --now app-tunnel
+for t in 4200-30080 80-80 4466-30466; do sudo systemctl enable --now k8s-tunnel@$t; done
 ```
 
 Le mot de passe MySQL n'apparaît jamais dans le dépôt : il vit uniquement dans le Secret `mysql-secret`.
@@ -230,23 +251,60 @@ Le mot de passe MySQL n'apparaît jamais dans le dépôt : il vit uniquement dan
 ### Déploiement manuel (hors Jenkins)
 
 ```bash
-kubectl apply -f k8s/
+kubectl apply -f k8s/app/
 kubectl -n gestion-projets rollout status deploy/backend
 ```
 
-### Accès
+### Points d'accès
 
 | URL | Contenu |
 |---|---|
-| `http://<hôte>:4200` | Application |
-| `http://<hôte>:4200/api/projet/all` | API via le proxy Nginx |
+| `http://gestion-projets.local` | Application via l'Ingress (entrée hosts requise) |
+| `http://gestion-projets.local/api/projet/all` | API via la passerelle Ingress |
+| `http://<hôte>:4200` | Application via le NodePort |
+| `http://<hôte>:4466` | Console Headlamp |
 
-### Exploitation
+Sur le poste client, ajouter au fichier hosts (`C:\Windows\System32\drivers\etc\hosts` ou `/etc/hosts`) :
+
+```
+192.168.56.10  gestion-projets.local
+```
+
+Jeton de connexion Headlamp (compte en lecture seule) :
 
 ```bash
-kubectl -n gestion-projets get pods,svc
+kubectl -n headlamp get secret headlamp-viewer-token -o jsonpath='{.data.token}' | base64 -d; echo
+```
+
+---
+
+## Vérifier l'application
+
+```bash
+# 1. État du cluster et de l'application
+kubectl get nodes
+kubectl -n gestion-projets get pods,svc,ingress
+
+# 2. Contrôleur Ingress opérationnel
+kubectl -n ingress-nginx get pods
+kubectl -n gestion-projets describe ingress api-gateway
+
+# 3. Interface et passerelle d'API
+curl -I -H "Host: gestion-projets.local" http://192.168.49.2/
+curl -H "Host: gestion-projets.local" http://192.168.49.2/api/projet/all
+curl http://192.168.49.2:30080/api/actuator/health
+
+# 4. Créer puis relire une donnée
+curl -X POST -H "Content-Type: application/json" -d '{"sujet":"Démo"}' \
+  -H "Host: gestion-projets.local" http://192.168.49.2/api/projet/add
+curl -H "Host: gestion-projets.local" http://192.168.49.2/api/projet/all
+```
+
+Exploitation courante :
+
+```bash
 kubectl -n gestion-projets logs deploy/backend -f
-kubectl -n gestion-projets rollout undo deploy/backend     # revenir à la version précédente
+kubectl -n gestion-projets rollout undo deploy/backend      # version précédente
 kubectl -n gestion-projets rollout restart deploy/frontend
 ```
 
@@ -254,14 +312,11 @@ kubectl -n gestion-projets rollout restart deploy/frontend
 
 ## Configuration
 
-Variables d'environnement du backend :
-
-| Variable | Valeur par défaut |
+| Variable (backend) | Valeur par défaut |
 |---|---|
 | `SERVER_PORT` | `8080` |
 | `DB_URL` | `jdbc:mysql://localhost:3306/test_db?createDatabaseIfNotExist=true` |
-| `DB_USERNAME` | `root` |
-| `DB_PASSWORD` | `root` |
+| `DB_USERNAME` / `DB_PASSWORD` | `root` / `root` |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:4200` |
 
 Santé : `GET /actuator/health` (groupes `liveness` et `readiness` utilisés par les sondes Kubernetes).
@@ -270,14 +325,7 @@ Santé : `GET /actuator/health` (groupes `liveness` et `readiness` utilisés par
 
 ## API
 
-| Ressource | Base |
-|---|---|
-| Entreprise | `/entreprise` |
-| Équipe | `/equipe` |
-| Projet | `/projet` |
-| Détail de projet | `/projet-detaille` |
-
-Chaque ressource expose `POST /add`, `PUT /update`, `GET /all`, `GET /get/{id}` et `DELETE /delete/{id}`.
+Chaque ressource (`/entreprise`, `/equipe`, `/projet`, `/projet-detaille`) expose `POST /add`, `PUT /update`, `GET /all`, `GET /get/{id}` et `DELETE /delete/{id}`.
 
 | Affectation | Endpoint |
 |---|---|
@@ -286,8 +334,6 @@ Chaque ressource expose `POST /add`, `PUT /update`, `GET /all`, `GET /get/{id}` 
 | Détail → projet | `PUT /projet-detaille/assign-projet/{detailId}/{projetId}` |
 
 Une affectation vers un identifiant inexistant renvoie `404 Not Found`.
-
-### Modèle de données
 
 | Entité | Description |
 |---|---|
@@ -305,6 +351,7 @@ Une affectation vers un identifiant inexistant renvoie `404 Not Found`.
 | `Not authorized` pendant `sonar:sonar` | Fournir un token : `-Dsonar.login=<token>` |
 | Quality Gate bloqué en `IN_PROGRESS` | Vérifier le webhook SonarQube vers Jenkins |
 | `401` lors de la publication Nexus | Vérifier le serveur `nexus` dans `~jenkins/.m2/settings.xml` |
-| Pod en `ErrImagePull` | Vérifier que l'image Docker Hub est publique et que le cluster a accès à Internet |
-| Pod backend non prêt | `kubectl -n gestion-projets logs deploy/backend` (souvent MySQL pas encore prêt) |
-| Application injoignable sur :4200 | `systemctl status app-tunnel` et `minikube status` |
+| `lookup registry-1.docker.io: i/o timeout` | Problème DNS de la machine : configurer un DNS public (systemd-resolved) |
+| Pod en `ErrImagePull` | Image Docker Hub publique ? Accès Internet du cluster ? |
+| Ingress répond `404` | Vérifier l'en-tête `Host: gestion-projets.local` et `kubectl get ingress -A` |
+| Application injoignable | `minikube status`, `systemctl status 'k8s-tunnel@*'` |

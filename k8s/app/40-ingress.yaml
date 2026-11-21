@@ -1,0 +1,48 @@
+# Ingress = single entry point / API gateway for the application.
+#   http://gestion-projets.local/        -> frontend (Angular)
+#   http://gestion-projets.local/api/... -> backend  (Spring Boot), "/api" prefix stripped
+# Requires the NGINX Ingress Controller (minikube addons enable ingress).
+
+# --- UI route -------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend
+  namespace: gestion-projets
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: gestion-projets.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+---
+# --- API route: /api/projet/all -> backend:8080/projet/all ------------------
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-gateway
+  namespace: gestion-projets
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/proxy-body-size: 2m
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: gestion-projets.local
+      http:
+        paths:
+          - path: /api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8080

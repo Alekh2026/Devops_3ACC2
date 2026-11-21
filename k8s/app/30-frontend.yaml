@@ -1,5 +1,5 @@
 # Angular app served by Nginx; /api is proxied to the backend Service.
-# Exposed on NodePort 30080, then published on the VM as port 4200.
+# Exposed on NodePort 30080 (published on the VM as port 4200 by ops/k8s-tunnel@.service).
 apiVersion: apps/v1
 kind: Deployment
 metadata:

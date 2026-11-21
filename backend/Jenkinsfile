@@ -1,7 +1,7 @@
 // =====================================================================
-//  projet-backend - Spring Boot API (triggers projet-frontend on success)
-//  Build -> Tests + coverage -> SonarQube -> Quality Gate
-//  -> Nexus (Maven artifact) -> Docker Hub (image) -> Kubernetes
+//  projet-backend - Spring Boot API
+//  Build + tests -> SonarQube -> Quality Gate -> Nexus -> Docker Hub
+//  -> Kubernetes. On success it triggers projet-frontend.
 // =====================================================================
 pipeline {
     agent any
@@ -13,7 +13,7 @@ pipeline {
     }
 
     triggers {
-        githubPush()                 // GitHub webhook (through ngrok)
+        githubPush()                 // GitHub webhook (exposed through ngrok)
         pollSCM('H/2 * * * *')       // fallback when the webhook is offline
     }
 
@@ -31,7 +31,7 @@ pipeline {
             }
         }
 
-        // Unit tests run on an in-memory H2 database, no MySQL needed here.
+        // Unit tests run on an in-memory H2 database: no MySQL needed in CI
         stage('Build & Unit Tests') {
             steps {
                 dir('backend') {
@@ -45,7 +45,7 @@ pipeline {
             }
         }
 
-        // Project key, host and JaCoCo report path are set in backend/pom.xml
+        // Project key, server URL and JaCoCo report path are declared in backend/pom.xml
         stage('SonarQube Analysis') {
             steps {
                 dir('backend') {
@@ -64,7 +64,7 @@ pipeline {
             }
         }
 
-        // Credentials for the "nexus" server live in ~jenkins/.m2/settings.xml
+        // Jar goes to maven-snapshots; credentials: server "nexus" in ~jenkins/.m2/settings.xml
         stage('Publish to Nexus') {
             steps {
                 dir('backend') {
@@ -79,13 +79,16 @@ pipeline {
                                                   usernameVariable: 'DOCKERHUB_USER',
                                                   passwordVariable: 'DOCKERHUB_TOKEN')]) {
                     dir('backend') {
-                        sh '''
-                            set -e
-                            docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
-                            printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin
-                            docker push "$IMAGE:$TAG"
-                            docker push "$IMAGE:latest"
-                        '''
+                        // Registry calls can hiccup on a weak network: retry before failing
+                        retry(3) {
+                            sh '''
+                                set -e
+                                docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
+                                printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin
+                                docker push "$IMAGE:$TAG"
+                                docker push "$IMAGE:latest"
+                            '''
+                        }
                     }
                 }
             }
@@ -96,15 +99,15 @@ pipeline {
             }
         }
 
-        // Applies the DB + API manifests, pinning the image to this build's tag
+        // Database + API, with the image pinned to this build's tag
         stage('Deploy to Kubernetes') {
             steps {
                 sh '''
                     set -e
-                    kubectl apply -f k8s/00-namespace.yaml
-                    kubectl apply -f k8s/10-mysql.yaml
-                    sed "s|$IMAGE:latest|$IMAGE:$TAG|" k8s/20-backend.yaml | kubectl apply -f -
-                    kubectl -n "$NAMESPACE" rollout status deployment/mysql --timeout=180s
+                    kubectl apply -f k8s/app/00-namespace.yaml
+                    kubectl apply -f k8s/app/10-mysql.yaml
+                    sed "s|$IMAGE:latest|$IMAGE:$TAG|" k8s/app/20-backend.yaml | kubectl apply -f -
+                    kubectl -n "$NAMESPACE" rollout status deployment/mysql   --timeout=300s
                     kubectl -n "$NAMESPACE" rollout status deployment/backend --timeout=300s
                 '''
             }
@@ -118,8 +121,8 @@ pipeline {
     }
 
     post {
-        success { echo "Backend ${env.TAG} is live in namespace ${env.NAMESPACE}." }
-        failure { echo 'Backend pipeline failed, check the stage logs above.' }
+        success { echo "Backend build ${env.TAG} is live in namespace ${env.NAMESPACE}." }
+        failure { echo 'Backend pipeline failed: check the failing stage above.' }
         always  { sh 'docker image prune -f || true' }
     }
 }
