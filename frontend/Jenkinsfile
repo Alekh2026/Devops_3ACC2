@@ -1,6 +1,6 @@
 // =====================================================================
-//  Frontend pipeline - Angular app served by Nginx
-//  Docker multi-stage build (npm ci + ng build) -> Docker Hub -> Kubernetes
+//  projet-frontend - Angular app served by Nginx
+//  Triggered by projet-backend. Docker multi-stage build (npm ci + ng build) -> Docker Hub -> Kubernetes
 //  Node is not installed on the Jenkins host: everything builds in Docker.
 // =====================================================================
 pipeline {
@@ -12,9 +12,9 @@ pipeline {
         timeout(time: 30, unit: 'MINUTES')
     }
 
+    // Chained after the backend: the API is always deployed before the UI
     triggers {
-        githubPush()
-        pollSCM('H/2 * * * *')
+        upstream(upstreamProjects: 'projet-backend', threshold: hudson.model.Result.SUCCESS)
     }
 
     environment {

@@ -19,7 +19,7 @@ spec:
       containers:
         - name: backend
           image: hyperrftw/devops-backend:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           env:

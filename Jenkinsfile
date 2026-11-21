@@ -1,5 +1,5 @@
 // =====================================================================
-//  Backend pipeline - Spring Boot API
+//  projet-backend - Spring Boot API (triggers projet-frontend on success)
 //  Build -> Tests + coverage -> SonarQube -> Quality Gate
 //  -> Nexus (Maven artifact) -> Docker Hub (image) -> Kubernetes
 // =====================================================================
